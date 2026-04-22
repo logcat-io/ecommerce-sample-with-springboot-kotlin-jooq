@@ -1,0 +1,14 @@
+spring:
+  flyway:
+    enabled: true
+  jooq:
+    sql-dialect: POSTGRES
+  kafka:
+    producer:
+      properties:
+        enable.idempotence: false
+
+logging:
+  level:
+    org.commerce: DEBUG
+    org.jooq.tools.LoggerListener: OFF
