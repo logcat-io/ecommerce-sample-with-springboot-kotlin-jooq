@@ -160,6 +160,11 @@ class TimeDealJooqAdaptor(
             .where(TIME_DEALS.ID.eq(timeDealId))
             .fetchOne(TIME_DEALS.VERSION)
 
+    override fun findAllActive(): List<TimeDeal> =
+        dsl.selectFrom(TIME_DEALS)
+            .where(TIME_DEALS.STATUS.eq(TimeDealStatus.ACTIVE.name))
+            .fetch { it.toDomain() }
+
     private fun TimeDealsRecord.toDomain(): TimeDeal = TimeDeal(
         id = this.id!!,
         productId = this.productId!!,

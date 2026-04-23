@@ -13,4 +13,6 @@ interface TimeDealQueryPort {
     fun getPurchasedQuantity(timeDealId: UUID, userId: UUID): Int
 
     fun findCurrentVersion(timeDealId: UUID): Long?
+
+    fun findAllActive(): List<TimeDeal>
 }

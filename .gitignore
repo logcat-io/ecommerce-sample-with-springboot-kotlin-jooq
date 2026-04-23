@@ -36,3 +36,6 @@ rules/
 # docker-compose.yml
 
 docker-compose.yml
+
+# claude
+.claude
