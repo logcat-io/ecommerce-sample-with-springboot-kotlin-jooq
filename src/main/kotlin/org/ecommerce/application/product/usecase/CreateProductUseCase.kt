@@ -2,7 +2,7 @@ package org.ecommerce.application.product.usecase
 
 import org.ecommerce.application.product.dto.CreateProductDto
 import org.ecommerce.application.product.dto.ProductResult
-import org.ecommerce.core.product.domain.Product
+import org.ecommerce.core.product.model.Product
 import org.ecommerce.core.product.port.ProductCommandPort
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional

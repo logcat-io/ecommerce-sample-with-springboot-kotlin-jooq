@@ -1,11 +1,11 @@
-package org.ecommerce.external.web.api.controller.v1.product
+package org.ecommerce.external.web.api.controller.product.v1
 
 import org.ecommerce.application.product.dto.SearchProductQuery
 import org.ecommerce.application.product.usecase.*
 import org.ecommerce.external.web.api.common.response.ApiResponse
-import org.ecommerce.external.web.api.controller.v1.product.request.CreateProductRequest
-import org.ecommerce.external.web.api.controller.v1.product.request.UpdateProductRequest
-import org.ecommerce.external.web.api.controller.v1.product.response.ProductResponse
+import org.ecommerce.external.web.api.controller.product.v1.request.CreateProductRequest
+import org.ecommerce.external.web.api.controller.product.v1.request.UpdateProductRequest
+import org.ecommerce.external.web.api.controller.product.v1.response.ProductResponse
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.DeleteMapping
@@ -32,7 +32,7 @@ class ProductController(
     @GetMapping("/{id}")
     fun getOne(@PathVariable id: UUID): ApiResponse<ProductResponse> {
         val result = getProductUseCase.execute(id)
-        return ApiResponse.success(ProductResponse.from(result))
+        return ApiResponse.success(ProductResponse.Companion.from(result))
 
     }
 
@@ -47,20 +47,20 @@ class ProductController(
             SearchProductQuery(category, cursor, capped)
         )
 
-        return ApiResponse.success(results.map { ProductResponse.from(it) })
+        return ApiResponse.success(results.map { ProductResponse.Companion.from(it) })
     }
 
     @PostMapping
     fun create(@RequestBody request: CreateProductRequest): ResponseEntity<ApiResponse<ProductResponse>> {
         val response = createProductUseCase.execute(request.toCommand())
         return ResponseEntity.status(HttpStatus.CREATED)
-            .body(ApiResponse.success(ProductResponse.from(response)))
+            .body(ApiResponse.success(ProductResponse.Companion.from(response)))
     }
 
     @PutMapping("/{id}")
     fun update(@PathVariable id: UUID, @RequestBody request: UpdateProductRequest): ApiResponse<ProductResponse>{
         val response = updateProductUseCase.execute(request.toCommand(id))
-        return ApiResponse.success(ProductResponse.from(response))
+        return ApiResponse.success(ProductResponse.Companion.from(response))
     }
 
     @DeleteMapping("/{id}")

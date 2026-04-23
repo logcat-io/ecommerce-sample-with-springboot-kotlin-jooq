@@ -1,4 +1,4 @@
-package org.ecommerce.external.web.api.controller.v1.product.response
+package org.ecommerce.external.web.api.controller.product.v1.response
 
 import org.ecommerce.application.product.dto.ProductResult
 import java.math.BigDecimal

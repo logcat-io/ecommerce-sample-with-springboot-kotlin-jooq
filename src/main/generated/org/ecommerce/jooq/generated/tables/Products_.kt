@@ -16,6 +16,8 @@ import org.ecommerce.jooq.generated.indexes.IDX_PRODUCTS_CATEGORY
 import org.ecommerce.jooq.generated.indexes.IDX_PRODUCTS_CREATED
 import org.ecommerce.jooq.generated.indexes.IDX_PRODUCTS_STATUS
 import org.ecommerce.jooq.generated.keys.PRODUCTS_PKEY
+import org.ecommerce.jooq.generated.keys.TIME_DEALS__TIME_DEALS_PRODUCT_ID_FKEY
+import org.ecommerce.jooq.generated.tables.TimeDeals_.TimeDealsPath
 import org.ecommerce.jooq.generated.tables.records.ProductsRecord
 import org.jooq.Condition
 import org.jooq.Field
@@ -23,6 +25,7 @@ import org.jooq.ForeignKey
 import org.jooq.Index
 import org.jooq.InverseForeignKey
 import org.jooq.Name
+import org.jooq.Path
 import org.jooq.PlainSQL
 import org.jooq.QueryPart
 import org.jooq.Record
@@ -35,6 +38,7 @@ import org.jooq.TableField
 import org.jooq.TableOptions
 import org.jooq.UniqueKey
 import org.jooq.impl.DSL
+import org.jooq.impl.Internal
 import org.jooq.impl.SQLDataType
 import org.jooq.impl.TableImpl
 
@@ -134,9 +138,38 @@ open class Products_(
      * Create a <code>public.products</code> table reference
      */
     constructor(): this(DSL.name("products"), null)
+
+    constructor(path: Table<out Record>, childPath: ForeignKey<out Record, ProductsRecord>?, parentPath: InverseForeignKey<out Record, ProductsRecord>?): this(Internal.createPathAlias(path, childPath, parentPath), path, childPath, parentPath, PRODUCTS, null, null)
+
+    /**
+     * A subtype implementing {@link Path} for simplified path-based joins.
+     */
+    open class ProductsPath : Products_, Path<ProductsRecord> {
+        constructor(path: Table<out Record>, childPath: ForeignKey<out Record, ProductsRecord>?, parentPath: InverseForeignKey<out Record, ProductsRecord>?): super(path, childPath, parentPath)
+        private constructor(alias: Name, aliased: Table<ProductsRecord>): super(alias, aliased)
+        override fun `as`(alias: String): ProductsPath = ProductsPath(DSL.name(alias), this)
+        override fun `as`(alias: Name): ProductsPath = ProductsPath(alias, this)
+        override fun `as`(alias: Table<*>): ProductsPath = ProductsPath(alias.qualifiedName, this)
+    }
     override fun getSchema(): Schema? = if (aliased()) null else Public_.PUBLIC
     override fun getIndexes(): List<Index> = listOf(IDX_PRODUCTS_CATEGORY, IDX_PRODUCTS_CREATED, IDX_PRODUCTS_STATUS)
     override fun getPrimaryKey(): UniqueKey<ProductsRecord> = PRODUCTS_PKEY
+
+    private lateinit var _timeDeals: TimeDealsPath
+
+    /**
+     * Get the implicit to-many join path to the <code>public.time_deals</code>
+     * table
+     */
+    fun timeDeals(): TimeDealsPath {
+        if (!this::_timeDeals.isInitialized)
+            _timeDeals = TimeDealsPath(this, null, TIME_DEALS__TIME_DEALS_PRODUCT_ID_FKEY.inverseKey)
+
+        return _timeDeals;
+    }
+
+    val timeDeals: TimeDealsPath
+        get(): TimeDealsPath = timeDeals()
     override fun `as`(alias: String): Products_ = Products_(DSL.name(alias), this)
     override fun `as`(alias: Name): Products_ = Products_(alias, this)
     override fun `as`(alias: Table<*>): Products_ = Products_(alias.qualifiedName, this)

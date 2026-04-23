@@ -1,6 +1,6 @@
 package org.ecommerce.application.product.dto
 
-import org.ecommerce.core.product.domain.Product
+import org.ecommerce.core.product.model.Product
 import java.math.BigDecimal
 import java.time.Instant
 import java.util.*

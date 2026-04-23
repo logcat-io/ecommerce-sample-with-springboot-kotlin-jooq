@@ -5,7 +5,12 @@ package org.ecommerce.jooq.generated.keys
 
 
 import org.ecommerce.jooq.generated.tables.Products_
+import org.ecommerce.jooq.generated.tables.TimeDealPurchases_
+import org.ecommerce.jooq.generated.tables.TimeDeals_
 import org.ecommerce.jooq.generated.tables.records.ProductsRecord
+import org.ecommerce.jooq.generated.tables.records.TimeDealPurchasesRecord
+import org.ecommerce.jooq.generated.tables.records.TimeDealsRecord
+import org.jooq.ForeignKey
 import org.jooq.UniqueKey
 import org.jooq.impl.DSL
 import org.jooq.impl.Internal
@@ -17,3 +22,13 @@ import org.jooq.impl.Internal
 // -------------------------------------------------------------------------
 
 val PRODUCTS_PKEY: UniqueKey<ProductsRecord> = Internal.createUniqueKey(Products_.PRODUCTS, DSL.name("products_pkey"), arrayOf(Products_.PRODUCTS.ID), true)
+val TIME_DEAL_PURCHASES_PKEY: UniqueKey<TimeDealPurchasesRecord> = Internal.createUniqueKey(TimeDealPurchases_.TIME_DEAL_PURCHASES, DSL.name("time_deal_purchases_pkey"), arrayOf(TimeDealPurchases_.TIME_DEAL_PURCHASES.ID), true)
+val TIME_DEAL_PURCHASES_TIME_DEAL_ID_USER_ID_KEY: UniqueKey<TimeDealPurchasesRecord> = Internal.createUniqueKey(TimeDealPurchases_.TIME_DEAL_PURCHASES, DSL.name("time_deal_purchases_time_deal_id_user_id_key"), arrayOf(TimeDealPurchases_.TIME_DEAL_PURCHASES.TIME_DEAL_ID, TimeDealPurchases_.TIME_DEAL_PURCHASES.USER_ID), true)
+val TIME_DEALS_PKEY: UniqueKey<TimeDealsRecord> = Internal.createUniqueKey(TimeDeals_.TIME_DEALS, DSL.name("time_deals_pkey"), arrayOf(TimeDeals_.TIME_DEALS.ID), true)
+
+// -------------------------------------------------------------------------
+// FOREIGN KEY definitions
+// -------------------------------------------------------------------------
+
+val TIME_DEAL_PURCHASES__TIME_DEAL_PURCHASES_TIME_DEAL_ID_FKEY: ForeignKey<TimeDealPurchasesRecord, TimeDealsRecord> = Internal.createForeignKey(TimeDealPurchases_.TIME_DEAL_PURCHASES, DSL.name("time_deal_purchases_time_deal_id_fkey"), arrayOf(TimeDealPurchases_.TIME_DEAL_PURCHASES.TIME_DEAL_ID), org.ecommerce.jooq.generated.keys.TIME_DEALS_PKEY, arrayOf(TimeDeals_.TIME_DEALS.ID), true)
+val TIME_DEALS__TIME_DEALS_PRODUCT_ID_FKEY: ForeignKey<TimeDealsRecord, ProductsRecord> = Internal.createForeignKey(TimeDeals_.TIME_DEALS, DSL.name("time_deals_product_id_fkey"), arrayOf(TimeDeals_.TIME_DEALS.PRODUCT_ID), org.ecommerce.jooq.generated.keys.PRODUCTS_PKEY, arrayOf(Products_.PRODUCTS.ID), true)

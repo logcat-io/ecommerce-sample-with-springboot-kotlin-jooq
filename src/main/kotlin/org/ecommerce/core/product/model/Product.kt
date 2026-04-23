@@ -1,4 +1,4 @@
-package org.ecommerce.core.product.domain
+package org.ecommerce.core.product.model
 
 import com.fasterxml.uuid.Generators
 import java.math.BigDecimal

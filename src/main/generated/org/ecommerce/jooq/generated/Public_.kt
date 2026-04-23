@@ -7,6 +7,8 @@ package org.ecommerce.jooq.generated
 import kotlin.collections.List
 
 import org.ecommerce.jooq.generated.tables.Products_
+import org.ecommerce.jooq.generated.tables.TimeDealPurchases_
+import org.ecommerce.jooq.generated.tables.TimeDeals_
 import org.jooq.Catalog
 import org.jooq.Table
 import org.jooq.impl.SchemaImpl
@@ -30,9 +32,21 @@ open class Public_ : SchemaImpl("public", DefaultCatalog.DEFAULT_CATALOG) {
      */
     val PRODUCTS: Products_ get() = Products_.PRODUCTS
 
+    /**
+     * The table <code>public.time_deal_purchases</code>.
+     */
+    val TIME_DEAL_PURCHASES: TimeDealPurchases_ get() = TimeDealPurchases_.TIME_DEAL_PURCHASES
+
+    /**
+     * The table <code>public.time_deals</code>.
+     */
+    val TIME_DEALS: TimeDeals_ get() = TimeDeals_.TIME_DEALS
+
     override fun getCatalog(): Catalog = DefaultCatalog.DEFAULT_CATALOG
 
     override fun getTables(): List<Table<*>> = listOf(
-        Products_.PRODUCTS
+        Products_.PRODUCTS,
+        TimeDealPurchases_.TIME_DEAL_PURCHASES,
+        TimeDeals_.TIME_DEALS
     )
 }

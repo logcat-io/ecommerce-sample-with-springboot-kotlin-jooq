@@ -1,4 +1,4 @@
-package org.ecommerce.core.product.domain
+package org.ecommerce.core.product.model
 
 enum class ProductStatus {
     ACTIVE,

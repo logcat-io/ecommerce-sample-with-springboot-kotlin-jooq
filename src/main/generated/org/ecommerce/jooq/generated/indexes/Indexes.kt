@@ -5,6 +5,7 @@ package org.ecommerce.jooq.generated.indexes
 
 
 import org.ecommerce.jooq.generated.tables.Products_
+import org.ecommerce.jooq.generated.tables.TimeDeals_
 import org.jooq.Index
 import org.jooq.impl.DSL
 import org.jooq.impl.Internal
@@ -18,3 +19,5 @@ import org.jooq.impl.Internal
 val IDX_PRODUCTS_CATEGORY: Index = Internal.createIndex(DSL.name("idx_products_category"), Products_.PRODUCTS, arrayOf(Products_.PRODUCTS.CATEGORY), false)
 val IDX_PRODUCTS_CREATED: Index = Internal.createIndex(DSL.name("idx_products_created"), Products_.PRODUCTS, arrayOf(Products_.PRODUCTS.CREATED_AT.desc()), false)
 val IDX_PRODUCTS_STATUS: Index = Internal.createIndex(DSL.name("idx_products_status"), Products_.PRODUCTS, arrayOf(Products_.PRODUCTS.STATUS), false)
+val IDX_TIMEDEALS_START_AT: Index = Internal.createIndex(DSL.name("idx_timedeals_start_at"), TimeDeals_.TIME_DEALS, arrayOf(TimeDeals_.TIME_DEALS.START_AT), false)
+val IDX_TIMEDEALS_STATUS: Index = Internal.createIndex(DSL.name("idx_timedeals_status"), TimeDeals_.TIME_DEALS, arrayOf(TimeDeals_.TIME_DEALS.STATUS), false)

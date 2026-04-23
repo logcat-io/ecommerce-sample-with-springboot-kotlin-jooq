@@ -1,7 +1,7 @@
 package org.ecommerce.external.persistence.jooq.product
 
-import org.ecommerce.core.product.domain.Product
-import org.ecommerce.core.product.domain.ProductStatus
+import org.ecommerce.core.product.model.Product
+import org.ecommerce.core.product.model.ProductStatus
 import org.ecommerce.core.product.port.ProductCommandPort
 import org.ecommerce.core.product.port.ProductQueryPort
 import org.ecommerce.jooq.generated.tables.records.ProductsRecord

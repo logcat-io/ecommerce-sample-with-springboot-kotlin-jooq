@@ -5,6 +5,8 @@ package org.ecommerce.jooq.generated.tables.references
 
 
 import org.ecommerce.jooq.generated.tables.Products_
+import org.ecommerce.jooq.generated.tables.TimeDealPurchases_
+import org.ecommerce.jooq.generated.tables.TimeDeals_
 
 
 
@@ -12,3 +14,13 @@ import org.ecommerce.jooq.generated.tables.Products_
  * The table <code>public.products</code>.
  */
 val PRODUCTS: Products_ = Products_.PRODUCTS
+
+/**
+ * The table <code>public.time_deal_purchases</code>.
+ */
+val TIME_DEAL_PURCHASES: TimeDealPurchases_ = TimeDealPurchases_.TIME_DEAL_PURCHASES
+
+/**
+ * The table <code>public.time_deals</code>.
+ */
+val TIME_DEALS: TimeDeals_ = TimeDeals_.TIME_DEALS

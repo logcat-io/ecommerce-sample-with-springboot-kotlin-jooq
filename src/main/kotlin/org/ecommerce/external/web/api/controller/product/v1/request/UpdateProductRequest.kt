@@ -1,15 +1,17 @@
-package org.ecommerce.external.web.api.controller.v1.product.request
+package org.ecommerce.external.web.api.controller.product.v1.request
 
-import org.ecommerce.application.product.dto.CreateProductDto
+import org.ecommerce.application.product.dto.UpdateProductDto
 import java.math.BigDecimal
+import java.util.UUID
 
-data class CreateProductRequest(
+data class UpdateProductRequest(
     val name: String,
     val description: String?,
     val price: BigDecimal,
     val category: String,
 ){
-    fun toCommand() = CreateProductDto(
+    fun toCommand(id: UUID) = UpdateProductDto(
+        id = id,
         name = name,
         description = description,
         price = price,
