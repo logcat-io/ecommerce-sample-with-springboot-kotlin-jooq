@@ -7,7 +7,7 @@
 -- Redis 는 실시간 캐시이고, 이 테이블이 진실의 원천(Source of Truth) 이다.
 CREATE TABLE time_deals
 (
-    -- PK: UUID v4. 외부 노출에 안전하고 분산 환경에서 충돌 없음.
+    -- PK: UUID v7 (uuid_generate_v7). 시간순 정렬 가능 + 외부 노출에 안전 + 분산 환경 충돌 없음.
     id              UUID PRIMARY KEY        DEFAULT uuid_generate_v7(),
 
     -- 어떤 상품의 타임딜인지. products 테이블 FK.

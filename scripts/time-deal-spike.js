@@ -12,14 +12,14 @@ export const options = {
     scenarios: {
         spike: {
             executor: 'shared-iterations',
-            vus: 2000,         // 동시 가상 사용자 200명
-            iterations: 2000,  // 총 200번 (각 VU 가 1번)
+            vus: 2000,         // 동시 가상 사용자 2,000명
+            iterations: 2000,  // 총 2,000번 (각 VU 가 1번)
             maxDuration: '30s',
         },
     },
     thresholds: {
         'purchase_success':  ['count==100'],   // 재고(100)와 정확히 일치
-        'purchase_duration': ['p(95)<300'],    // 95% 요청이 200ms 미만
+        'purchase_duration': ['p(95)<300'],    // 95% 요청이 300ms 미만
     },
 };
 
@@ -52,8 +52,9 @@ export default function () {
         purchaseFailed.add(1);
     }
 
+    // 500(서버 에러)은 통과로 치지 않는다 — 커넥션 풀 고갈 등 장애를 숨기지 않기 위함.
     check(res, {
-        'status is 201 or 409 or 500': (r) => r.status === 201 || r.status === 409 || r.status === 500,
+        'status is 201 or 409': (r) => r.status === 201 || r.status === 409,
     });
 }
 

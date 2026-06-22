@@ -30,13 +30,13 @@ class StockReconciler(
                     stockPort.increase(deal.id, diff)
 
                     log.warn(
-                        "[Reconciler] deal=$deal.id Redis($redisStock) < DB($dbStock) - 비정상 상태. 운영자 확인 필요"
+                        "[Reconciler] deal=${deal.id} Redis($redisStock) < DB($dbStock) - 비정상 상태. 운영자 확인 필요"
                     )
                 }
 
                 redisStock > dbStock -> {
                     log.error(
-                        "[Reconciler] deal=$deal.id Redis($redisStock) > DB($dbStock) - 비정상 상태. 운영자 확인 필요"
+                        "[Reconciler] deal=${deal.id} Redis($redisStock) > DB($dbStock) - 비정상 상태. 운영자 확인 필요"
                     )
                 }
 
