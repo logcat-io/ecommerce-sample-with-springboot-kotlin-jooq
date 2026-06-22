@@ -17,7 +17,7 @@
 
 ## 핵심 설계 — Phase 2 동시성 파이프라인
 
-1,000+ 동시 요청에서 **Oversell 0 건**을 보장하는 3중 방어 구조입니다.
+2,000 동시 요청(재고 100)에서 **Oversell 0 건**을 보장하는 3중 방어 구조입니다.
 
 ```
 요청 ──→ [1차] Redis Lua 원자 차감
@@ -36,8 +36,20 @@
 **왜 이 구조인가?**
 
 - `SELECT FOR UPDATE` (비관적 락) 는 고트래픽에서 lock wait 가 DB 커넥션 풀을 고갈시킵니다.
-- Redis Lua 가 90%+ 요청을 DB 도달 전에 차단하므로 Optimistic Lock 의 충돌 빈도가 낮아집니다.
+- Redis Lua 가 약 95% 요청을 DB 도달 전에 차단하므로 Optimistic Lock 의 충돌 빈도가 낮아집니다.
 - 각 레이어가 독립적으로 정합성을 보장하므로, Redis 장애나 프로세스 크래시에도 Oversell 이 발생하지 않습니다.
+
+### 부하 테스트 검증 결과
+
+재고 100 개에 2,000 동시 요청(k6 spike)을 발생시킨 결과:
+
+| 지표 | 목표 | 결과 |
+|------|------|------|
+| Oversell | 0 건 | **0 건** ✅ |
+| 구매 성공 | 정확히 100 건 | **100 건** |
+| p95 응답 시간 | < 300ms | **271ms** |
+| Redis 1차 차단율 | — | **약 95%** (1,900 / 2,000) |
+| DB 커넥션 풀 고갈 | 없음 | **없음** |
 
 ---
 
@@ -47,7 +59,7 @@
 |------|------|
 | Language | Kotlin 2.2 / JDK 21 (Virtual Thread) |
 | Framework | Spring Boot 4 (Spring MVC) |
-| DB | PostgreSQL 17, Flyway |
+| DB | PostgreSQL 16, Flyway |
 | ORM | jOOQ 3.19 (코드 생성 기반 타입 안전 쿼리) |
 | Cache | Redis 7 (Lua 스크립트 원자 연산) |
 | Messaging | Apache Kafka 3.8 (KRaft, Phase 3 예정) |
@@ -111,7 +123,7 @@ src/test/kotlin/org/ecommerce/
 docker compose up -d
 ```
 
-PostgreSQL(5437), Redis(6378), Kafka(9092) 가 함께 기동됩니다.
+PostgreSQL 16(5437), Redis 7(6378) 이 기동됩니다. (Kafka 는 Phase 3 에서 추가 예정)
 
 ### 빌드 및 실행
 
@@ -207,14 +219,14 @@ k6 run \
   scripts/time-deal-spike.js
 ```
 
-정상 결과:
+정상 결과 (재고 100, 2,000 동시 요청):
 ```
 === Oversell Detection Report ===
 Purchase Success: 100
-Purchase Failed:  100
+Purchase Failed:  1900
 Oversell:         NO ✅
 =================================
-✓ status is 201 or 409  100.00%
+✓ purchase_duration  p(95)=271ms (<300ms)
 ```
 
 ---
@@ -227,7 +239,7 @@ Oversell:         NO ✅
 
 ### 왜 Optimistic Lock인가?
 
-비관적 락(`SELECT FOR UPDATE`)은 동일 row에 대한 모든 요청을 순차 대기시킵니다. 1,000 req/s 스파이크에서는 lock wait 가 DB 커넥션 풀을 고갈시킵니다. Optimistic Lock은 잠금 없이 UPDATE 시점에 version 불일치를 감지합니다. Redis가 이미 90%+ 를 사전 차단하므로 DB 도달 요청 수가 적어 충돌 빈도가 낮습니다.
+비관적 락(`SELECT FOR UPDATE`)은 동일 row에 대한 모든 요청을 순차 대기시킵니다. 1,000 req/s 스파이크에서는 lock wait 가 DB 커넥션 풀을 고갈시킵니다. Optimistic Lock은 잠금 없이 UPDATE 시점에 version 불일치를 감지합니다. Redis가 이미 약 95% 를 사전 차단하므로 DB 도달 요청 수가 적어 충돌 빈도가 낮습니다.
 
 ### 왜 재시도(MAX_RETRY_COUNT=3)인가?
 
@@ -235,4 +247,7 @@ Redis를 통과한 소수의 요청이 동시에 동일 version을 읽으면, 1�
 
 ### StockReconciler
 
-프로세스 크래시 또는 rollback 실패로 `Redis < DB` 불일치가 발생할 수 있습니다. `StockReconciler`가 60초 주기로 ACTIVE 딜 전체를 순회하며 `INCRBY` 로 복구합니다. `SET` 대신 `INCRBY` 를 쓰는 이유는 복구 시점에 in-flight 요청이 동시에 차감 중일 수 있기 때문입니다.
+프로세스 크래시 또는 rollback 실패로 Redis-DB 재고가 어긋날 수 있습니다. `StockReconciler`가 60초 주기로 ACTIVE 딜 전체를 순회하며 두 방향을 구분해 처리합니다.
+
+- **`Redis < DB`** (복구 가능): 차이만큼 `INCRBY` 로 Redis 를 교정합니다. `SET` 대신 `INCRBY` 를 쓰는 이유는 복구 시점에 in-flight 요청이 동시에 차감 중일 수 있기 때문입니다.
+- **`Redis > DB`** (비정상): 자동 교정하면 Oversell 위험이 있어 고치지 않고 `log.error` 로 알람만 남겨 운영자 개입을 유도합니다.

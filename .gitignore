@@ -1,7 +1,6 @@
 # Gradle
 .gradle/
 build/
-!gradle/wrapper/gradle-wrapper.jar
 
 # IDE
 .idea/
@@ -16,6 +15,8 @@ src/main/kotlin/org/commerce/jooq/
 # Spring Boot
 *.jar
 *.war
+# gradle wrapper jar 는 추적해야 ./gradlew 가 동작한다 (*.jar 예외)
+!gradle/wrapper/gradle-wrapper.jar
 
 # OS
 .DS_Store
@@ -32,10 +33,6 @@ docs/
 reports/
 develop-guide/
 rules/
-
-# docker-compose.yml
-
-docker-compose.yml
 
 # claude
 .claude
