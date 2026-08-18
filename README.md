@@ -1,253 +1,261 @@
-# ecommerce-server
+# ecommerce-server — 타임딜 재고 차감
 
-> Kotlin / Spring Boot 4 기반 실시간 커머스 플랫폼 포트폴리오.  
-> **타임딜 동시성 제어**를 핵심 주제로, 대규모 트래픽 스파이크에서 Oversell 0 을 보장하는 재고 차감 파이프라인을 구현합니다.
+> 확정 실패할 요청을 앞단에서 버려 DB 커넥션 풀을 지키는 재고 차감 파이프라인.
 
----
-
-## 구현 현황
-
-| Phase | 주제 | 상태 |
-|-------|------|------|
-| Phase 1 | 상품 도메인 — CRUD, 레이어드 아키텍처 기반 | ✅ 완료 |
-| Phase 2 | 타임딜 동시성 — Redis Lua + Optimistic Lock + UPSERT 3중 방어 | ✅ 완료 |
-| Phase 3 | 주문 실시간 추적 — Transactional Outbox + Kafka + SSE | 🚧 예정 |
+Kotlin 2.2 / JDK 21 (Virtual Thread) / Spring Boot 4 / jOOQ 3.19 / PostgreSQL 16 / Redis 7 / k6
 
 ---
 
-## 핵심 설계 — Phase 2 동시성 파이프라인
+## 무엇을 지키려고 만들었나
 
-2,000 동시 요청(재고 100)에서 **Oversell 0 건**을 보장하는 3중 방어 구조입니다.
+재고 100에 동시 2,000이 들어오면 1,900건은 확정 실패다. 재고를 열기도 전에 이미 정해져 있는 숫자다.
+
+처음엔 이걸 "Oversell 을 어떻게 막느냐" 문제로 봤다. 그런데 그건 `UPDATE ... WHERE stock > 0` 한 줄로도 막힌다. 재고가 음수가 되는 일은 안 생긴다.
+
+진짜 걸리는 건 다른 데 있다. 그 1,900건이 "너 실패야"라는 말을 듣기까지 커넥션을 하나씩 붙들고 있다. 풀은 20개다. 그동안 상품 조회도, 주문 내역도, 타임딜과 아무 상관 없는 요청까지 같은 줄에 선다. 타임딜 하나가 서비스 전체를 느리게 만든다.
+
+그래서 이건 방어선을 쌓는 문제가 아니라 **어차피 실패할 요청에 얼마나 비싼 자원을 쓰느냐**의 문제다. 답은 층을 늘리는 게 아니라, 거부 비용이 싼 곳에서 먼저 거부하는 것이다.
+
+---
+
+## 파이프라인
 
 ```
-요청 ──→ [1차] Redis Lua 원자 차감
-           │ 재고 부족? → 즉시 409 (DB 접근 0)
+요청 ──→ [0차] findById · getPurchasedQuantity   DB SELECT 2회 (필터 앞)
            ▼
-         [2차] DB Optimistic Lock UPDATE
-           │ version 불일치? → Redis 복구 + 409
-           │ (최대 3회 재시도: version 재조회 후 재시도)
+         [1차] Redis Lua 원자 차감           거부 비용: 메모리 연산
+           │ 재고 부족 → 409, DB 쓰기 없음
+           ▼
+         [2차] DB Optimistic Lock UPDATE      거부 비용: 디스크 IO + 커넥션 점유
+           │ version 불일치 → Redis 복구 + 409
+           │ (최대 3회 재시도)
            ▼
          [3차] UPSERT WHERE quantity + ? <= maxPerUser
-           │ 한도 초과? → Redis 복구 + 409
+           │ 1인 한도 초과 → Redis 복구 + 409
            ▼
          구매 확정
 ```
 
-**왜 이 구조인가?**
+순서를 정한 기준은 하나다. 싼 거부를 앞에.
 
-- `SELECT FOR UPDATE` (비관적 락) 는 고트래픽에서 lock wait 가 DB 커넥션 풀을 고갈시킵니다.
-- Redis Lua 가 약 95% 요청을 DB 도달 전에 차단하므로 Optimistic Lock 의 충돌 빈도가 낮아집니다.
-- 각 레이어가 독립적으로 정합성을 보장하므로, Redis 장애나 프로세스 크래시에도 Oversell 이 발생하지 않습니다.
+재고 소진은 가장 흔하고 가장 싸게 판정된다. 그래서 맨 앞이다. 1인 한도는 구매 이력을 봐야 알 수 있으니 맨 뒤다.
 
-### 부하 테스트 검증 결과
-
-재고 100 개에 2,000 동시 요청(k6 spike)을 발생시킨 결과:
-
-| 지표 | 목표 | 결과 |
-|------|------|------|
-| Oversell | 0 건 | **0 건** ✅ |
-| 구매 성공 | 정확히 100 건 | **100 건** |
-| p95 응답 시간 | < 300ms | **271ms** |
-| Redis 1차 차단율 | — | **약 95%** (1,900 / 2,000) |
-| DB 커넥션 풀 고갈 | 없음 | **없음** |
+세 층이 정합성을 겹쳐서 보장하는 구조가 아니다. 각 층이 서로 다른 종류의 거부를 맡고, 그래서 뒤로 갈수록 도달하는 트래픽이 줄어든다. 이 차이가 중요하다고 생각한다 — 전자는 "불안해서 세 겹 쌌다"로 읽히고, 후자는 각 층에 존재 이유가 있다.
 
 ---
 
-## 기술 스택
+## 재고 100에 2,000을 넣어봤다
 
-| 분류 | 기술 |
-|------|------|
-| Language | Kotlin 2.2 / JDK 21 (Virtual Thread) |
-| Framework | Spring Boot 4 (Spring MVC) |
-| DB | PostgreSQL 16, Flyway |
-| ORM | jOOQ 3.19 (코드 생성 기반 타입 안전 쿼리) |
-| Cache | Redis 7 (Lua 스크립트 원자 연산) |
-| Messaging | Apache Kafka 3.8 (KRaft, Phase 3 예정) |
-| Test | JUnit 5, Testcontainers, Mockito-Kotlin |
-| Load Test | k6 |
+전문은 [`reports/load-test-timedeal-spike.md`](reports/load-test-timedeal-spike.md). 2026-08-18, M2 Max 32GB 단일 머신.
+
+파라미터를 도메인에서 가져왔다. 재고 100에 요청 2,000이면 초과청약 20:1이고, 확정 실패가 통과보다 압도적으로 많은 이 비율이 설계의 전제다. 도착 형태는 `ramping-arrival-rate` 로 피크 700 rps, 4초. 타임딜은 2,000명이 앉아 있는 게 아니라 오픈 순간 요청이 쏟아지는 것이라서다.
+
+그리고 상품 조회를 50 rps 로 전 구간 흘렸다. 주장이 "무관한 요청이 밀린다"이므로 밀려나는 쪽을 같이 재야 한다.
+
+Redis 재고 키를 크게 덮어 1차 필터를 무력화한 대조군도 같이 돌렸다. 코드는 안 고쳤다.
+
+### 정합성은 양쪽 다 맞았다
+
+```
+                 필터 ON   필터 OFF
+구매 성공            100       100      재고와 일치
+Oversell            없음      없음
+409 품절           1,999         0
+409 버전충돌            0     1,999
+5xx                   0         0
+DB version          100       100
+```
+
+같은 부하에 같은 결과인데 **실패의 성격이 정반대**다. 필터가 있으면 Redis 가 재고 없음을 즉시 판정하고, 없으면 DB 까지 가서 경합하다 재시도를 소진한다. 이 구분은 원래 안 보였다 — 아래 참조.
+
+### 조회는 안 밀렸다
+
+| 구간 | 필터 ON | 필터 OFF |
+|---|---:|---:|
+| 스파이크 전 | 6.29 ms | 5.88 ms |
+| 스파이크 중 | 5.32 ms | 4.43 ms |
+| 스파이크 후 | 5.77 ms | 6.01 ms |
+
+이 프로젝트가 하려던 얘기가 여기서 무너진다. Redis 를 꺼도 조회 지연이 안 늘었다.
+
+산수를 해보면 당연하다. 700 rps 에 평균 7ms 면 동시 커넥션이 5개쯤이다. 풀은 20개다. 경합할 수가 없다. **부하가 부족한 것이지 설계가 증명된 게 아니다.**
+
+### 구매 경로 자체는 갈렸다
+
+| | 필터 ON | 필터 OFF |
+|---|---:|---:|
+| 구매 p95 (3회 중앙값) | 3.24 ms | 9.61 ms |
+| DB 왕복 / 요청 | 1.15회 | 6.9회 |
+
+`time_deals` 스캔이 2,420 대 14,422 다. 필터를 끄면 실패한 1,999건이 각각 재시도 3회를 소진하면서 `SELECT` 3번 + `UPDATE` 3번을 쓴다. **자원을 아끼려고 넣은 재시도가 경합 상황에서는 자원을 더 쓴다.**
+
+### Redis 앞에서 이미 DB 를 두 번 친다
+
+필터 ON 인데도 `time_deals` 스캔이 2,420 다. 요청 2,100건이 전부 DB 를 읽었다는 뜻이다.
+
+`PurchaseTimeDealUseCase` 가 Redis 를 부르기 전에 `findById` 와 `getPurchasedQuantity` 를 실행하기 때문이다. Redis 가 막는 건 재고 차감 `UPDATE` 지 DB 접근 자체가 아니다. 위 파이프라인 그림의 "DB 접근 0" 은 정확하지 않다.
 
 ---
 
-## 프로젝트 구조
+## 버전 충돌은 어떻게 처리되나
 
-```
-src/main/kotlin/org/ecommerce/
-├── core/                           # 도메인 — Spring 의존성 없음
-│   ├── product/
-│   │   ├── model/                  # Product, ProductStatus
-│   │   └── port/                   # ProductCommandPort, ProductQueryPort
-│   └── timedeal/
-│       ├── model/                  # TimeDeal, TimeDealStatus
-│       ├── service/                # TimeDealValidator, StockDecreaser, StockRollbackHandler
-│       ├── port/                   # StockPort, TimeDealCommandPort, TimeDealQueryPort
-│       └── exception/              # StockExhaustedException, PurchaseLimitExceededException, ...
-│
-├── application/                    # UseCase 오케스트레이션
-│   ├── product/usecase/            # CreateProduct, GetProduct, SearchProducts, ...
-│   └── timedeal/
-│       ├── usecase/                # PurchaseTimeDealUseCase, CreateTimeDealUseCase
-│       ├── dto/                    # Command / Result DTO
-│       └── config/                 # TimeDealBeanConfig (도메인 서비스 Bean 등록)
-│
-└── external/                       # 인프라 — DB, Redis, Kafka, HTTP
-    ├── persistence/jooq/
-    │   ├── product/                # ProductJooqAdapter
-    │   └── timedeal/               # TimeDealJooqAdaptor
-    ├── cache/timedeal/             # StockRedisAdaptor (Lua 스크립트)
-    ├── scheduler/                  # StockReconciler (Redis-DB 정합성 복구)
-    └── web/api/controller/
-        ├── product/v1/             # ProductController
-        └── timedeal/v1/            # TimeDealController
+`decreaseStockWithVersion` 은 `WHERE version = ? AND remaining_stock >= ?` 로 UPDATE 한다. 다른 요청이 먼저 커밋했으면 version 이 어긋나 affected rows 가 0 이 되고, 그게 충돌 신호다.
 
-src/test/kotlin/org/ecommerce/
-├── core/timedeal/service/
-│   ├── TimeDealValidatorTest.kt    # 순수 Kotlin 단위 테스트
-│   └── StockDecreaserTest.kt       # Mock 기반 재시도 정책 검증
-└── core/integration/timedeal/
-    └── PurchaseTimeDealConcurrencyTest.kt  # Testcontainers 동시성 통합 테스트
+```kotlin
+repeat(MAX_RETRY_COUNT) {                        // 3
+    val currentVersion = findCurrentVersion(id)  // 매 회 새로 읽는다
+        ?: run { rollback(); return VersionConflict }
+    if (decreaseStockWithVersion(id, qty, currentVersion)) return Success
+}
+rollback()                                        // Redis INCRBY 로 되돌리고
+return VersionConflict
 ```
+
+핵심은 재시도마다 version 을 다시 읽는 것이다. 들고 있던 값으로 다시 쏘면 영원히 실패한다. 3회를 다 쓰면 Redis 차감을 되돌리고 `VersionConflict` 를 돌려준다. 실패를 예외가 아니라 `sealed class Result` 로 표현해서, 호출자가 `when` 으로 사유별 분기를 강제받는다.
+
+측정에서 이 경로는 필터 ON 일 때 **0회** 밟혔다. Redis 가 1,999건을 먼저 걸러서 DB 에 도달한 100건이 서로 경합하지 않았다. 대조군에서는 1,999건 전부가 3회를 소진하고 실패했다. 그러니까 재시도 3회가 적절한 값인지는 아직 모른다. 정상 구성에서는 그 코드가 안 돈다.
+
+### 실패를 품절로 바꿔 보내고 있었다
+
+```kotlin
+// before
+StockDecreaser.Result.VersionConflict -> {
+    throw StockExhaustedException()
+}
+```
+
+버전 충돌을 품절로 바꿔서 내보냈다. 사용자는 재고가 있는데 `409 STOCK_EXHAUSTED` 를 받는다. 그 예외에 달린 주석은 "클라이언트는 409 를 보면 재시도해도 의미 없음을 알 수 있다" 인데, 버전 충돌은 재시도하면 성공할 수 있는 실패다. 정반대 신호를 주고 있었다.
+
+관측도 같이 막혔다. 로그에도 메트릭에도 둘을 가르는 게 없어서, 첫 측정 때는 Redis `INCRBY` 호출 수를 세는 우회로로 충돌 횟수를 알아내야 했다.
+
+`STOCK_VERSION_CONFLICT` 로 분리하고 시도 횟수를 실어 보내게 고쳤다.
+
+```kotlin
+data class VersionConflict(val attempts: Int) : Result()
+```
+
+HTTP 상태는 409 를 유지했다. 상태 충돌인 건 같고, 409 를 종료 상태로 취급하는 기존 클라이언트를 깨뜨리지 않는다. 재시도 가능 여부는 `errorCode` 로 판단하게 했다.
+
+고치고 나니 §정합성 표의 두 줄이 갈렸다. 개선 전이라면 양쪽 구성의 4,000건이 전부 "품절" 한 칸에 들어갔을 것이다.
 
 ---
 
-## 시작하기
+## 딜을 만들어도 팔리지 않았다
 
-### 사전 요구사항
+측정을 처음 돌렸을 때 구매 2,099건이 전부 `400 TIME_DEAL_NOT_ACTIVE` 로 떨어졌다.
 
-- JDK 21
-- Docker / Docker Compose
-- k6 (부하 테스트 실행 시)
+`TimeDeal.create()` 는 항상 `SCHEDULED` 를 만드는데, `ACTIVE` 로 바꾸는 코드가 리포지토리 어디에도 없었다. `isActiveAt()` 은 `status == ACTIVE` 를 요구한다. **API 로 만든 딜은 영원히 팔리지 않는 상태였다.** 이전 측정들은 SQL 로 상태를 직접 올려서 돌렸던 것이다.
 
-### 인프라 기동
+고칠 때 갈림길이 있었다.
 
-```bash
-docker compose up -d
+| | 전이 스케줄러만 추가 | 판단 주체를 시간으로 |
+|---|---|---|
+| 오픈 직후 | 스케줄러 주기만큼 못 산다 | 즉시 열린다 |
+| 상태 라벨 | 정확 | 잠깐 늦을 수 있다 |
+| 스케줄러가 죽으면 | 판매가 안 열린다 | 판매는 열린다 |
+
+시간을 판단 주체로 뒀다. 스케줄러 주기만큼 생기는 창이 하필 **타임딜에서 가장 중요한 순간과 겹치기** 때문이다.
+
+```kotlin
+fun isActiveAt(now: Instant): Boolean =
+    now in startAt..endAt &&
+        status != TimeDealStatus.SOLD_OUT &&
+        status != TimeDealStatus.ENDED
 ```
 
-PostgreSQL 16(5437), Redis 7(6378) 이 기동됩니다. (Kafka 는 Phase 3 에서 추가 예정)
+라벨은 `TimeDealStatusScheduler` 가 5초마다 따라간다. 라벨이 필요한 이유는 판매 판단이 아니라 운영 가시성과 `findAllActive()` 같은 상태 기준 조회다. **판단과 라벨을 분리했으니 잡이 죽어도 판매는 열린다.**
 
-### 빌드 및 실행
+대가는 상태 컬럼이 잠깐 진실이 아니라는 것이다. `SCHEDULED` 인데 이미 팔리고 있는 순간이 최대 5초 존재한다. 운영 화면에서 상태만 보고 판단하면 안 된다.
 
-```bash
-# jOOQ 메타모델 생성 (DB 기동 후 최초 1회)
-./gradlew generateJooq
+## 내린 결정과 대가
 
-# 애플리케이션 실행 (Flyway 마이그레이션 자동 적용)
-./gradlew bootRun
-```
+### Redis Lua 를 1차 필터로
 
-### 테스트 실행
+`DECRBY` 단독으로는 "확인 후 차감"이 원자적이지 않다. GET → 판단 → DECRBY 사이에 끼어들면 재고가 음수가 된다. Lua 는 셋을 Redis 안에서 한 명령으로 끝낸다.
 
-```bash
-# 단위 테스트
-./gradlew test
+대가는 재고의 진실이 둘이 된다는 것이다. Redis 와 DB 가 어긋날 수 있고, 그래서 `StockReconciler` 가 필요해졌다. 부품 하나를 얻으려고 부품 하나를 더 만든 셈이다.
 
-# 동시성 통합 테스트 (Testcontainers — 약 30~60초 소요)
-./gradlew test --tests "*.PurchaseTimeDealConcurrencyTest"
-```
+### 비관적 락 대신 Optimistic Lock
+
+`SELECT FOR UPDATE` 는 같은 row 의 요청을 전부 줄 세운다. hot row 에서는 그 대기가 곧 커넥션 점유고, 풀 20개가 그대로 잠긴다. OL 은 잠그지 않고 UPDATE 시점에 version 으로 감지한다.
+
+대가는 실패가 는다는 것. 다만 이 실패는 Oversell 이 아니라 기회 손실이다.
+
+### 재시도 3회
+
+Redis 를 통과한 소수가 같은 version 을 동시에 읽으면 1건만 성공한다. 재시도가 version 을 매번 새로 읽어서, 팔 수 있었는데 못 판 경우를 줄인다. 5만 런에서 OL conflict 는 1회 났고 retry 로 흡수됐다.
+
+무한 재시도는 그 자체가 부하라서 3회로 끊었다. 3이 최적이라는 근거는 없다. 측정해서 정한 게 아니라 일단 정한 값이다.
+
+### StockReconciler 는 `SET` 이 아니라 `INCRBY`
+
+크래시나 롤백 실패로 `Redis < DB` 가 생길 수 있어 60초마다 ACTIVE 딜을 돌며 복구한다. `SET` 으로 덮으면 복구하는 그 순간 진행 중이던 차감까지 지워버린다. 그래서 차분만 더한다.
+
+### 이 설계를 안 쓸 조건
+
+동시 요청이 재고 대비 크지 않으면 여기까지 갈 필요가 없다. 거부될 요청이 적으면 걸러낼 것도 없고, Redis 는 이득 없이 "두 번째 진실"이라는 비용만 남긴다. DB 단독 + OL 로 충분하다.
+
+이 파이프라인이 값을 하는 건 거부될 요청이 통과할 요청보다 압도적으로 많을 때다. 그게 아니면 과한 설계가 맞다.
 
 ---
 
-## API 엔드포인트
+## 이번에 알게 된 것
 
-### 상품 (Phase 1)
+**측정 설계가 측정 결과보다 먼저다.** 이전에 5만 VU 를 돌렸는데 그 숫자를 고른 근거가 없었다. 2,000으로 했으니 더 세게 해보자는 것뿐이었다. 단일 인스턴스가 5만 동시 요청을 받는 상황은 실무에 없고, 그래서 그 측정은 시스템이 아니라 Tomcat 의 accept 한계를 잰 것에 가까웠다. 이번엔 초과청약 20:1 과 오픈 순간의 도착률에서 파라미터를 가져왔다.
 
-| Method | Path | 설명 |
-|--------|------|------|
-| `POST` | `/api/products` | 상품 생성 |
-| `GET` | `/api/products/{id}` | 상품 단건 조회 |
-| `GET` | `/api/products?keyword=&category=` | 상품 검색 |
-| `PUT` | `/api/products/{id}` | 상품 수정 |
-| `DELETE` | `/api/products/{id}` | 상품 삭제 |
+**주장을 검증하려면 대조군이 있어야 한다.** "Redis 가 자원을 지킨다"는 Redis 를 켜고 재서는 확인되지 않는다. 재고 키를 크게 덮어 필터를 무력화하니 코드 한 줄 안 고치고 대조군이 만들어졌고, 그 순간 추정이던 것들이 숫자가 됐다.
 
-### 타임딜 (Phase 2)
+**그리고 그 대조군이 내 주장을 반증했다.** 조회 지연이 필터를 꺼도 안 늘었다. 700 rps 는 커넥션 풀 20개에 부하가 아니었다. 자원 격리 효과를 보려면 풀이 실제로 경합하는 지점까지 가야 하는데, 그 지점을 아직 모른다.
 
-| Method | Path | 설명 |
-|--------|------|------|
-| `POST` | `/api/v1/time-deals` | 타임딜 생성 |
-| `POST` | `/api/v1/time-deals/{id}/purchase` | 타임딜 구매 |
+**측정을 돌리는 것 자체가 결함을 찾는 방법이었다.** 첫 실행에서 구매 2,099건이 통째로 400 으로 떨어졌다. 부하를 재려다 "딜을 만들어도 팔리지 않는다"는 걸 발견했다. 테스트 36건이 통과하는 상태였는데도 그랬다. 단위 테스트는 내가 물어본 것만 답한다.
 
----
+**실패를 뭉뚱그리면 나중에 그 대가를 치른다.** 버전 충돌과 품절을 같은 예외로 던져서, 첫 측정 때 Redis `INCRBY` 호출 수를 세는 우회로로 충돌 횟수를 알아내야 했다. 분리하고 나니 응답 하나로 바로 세어진다. 관측 가능성은 대시보드가 아니라 실패를 표현하는 타입에서 시작한다.
 
-## 타임딜 동작 확인
+**틀렸다고 생각한 지점이 실제 병목이 아니었다.** 이전 측정의 실패 44,352건을 500 으로, 원인을 스레드 풀 고갈로 읽었다. 로그를 열어보니 `dial: i/o timeout` 이었다. 상태 코드를 받은 게 아니라 TCP 연결을 못 잡은 거였고, 애초에 가상 스레드라 고갈될 고정 크기 풀도 없었다.
 
-### 타임딜 생성
+**체크가 장애를 성공으로 세면 리포트 전체가 의미를 잃는다.** 예전 k6 체크는 `201 · 409 · 500` 을 한 덩어리로 셌다. 지금은 상태별로 세고, 그래서 "5xx 0건" 이라고 말할 수 있다.
 
-```bash
-# 1. 상품 생성
-PRODUCT_ID=$(curl -s -X POST http://localhost:8080/api/products \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "name": "한정판 스니커즈",
-    "description": "타임딜 테스트용",
-    "price": 150000,
-    "category": "shoes"
-  }' | jq -r '.data.id')
-
-# 2. 타임딜 생성 (재고 100, 1인 1개 한도)
-TIME_DEAL_ID=$(curl -s -X POST http://localhost:8080/api/v1/time-deals \
-  -H 'Content-Type: application/json' \
-  -d "{
-    \"productId\": \"${PRODUCT_ID}\",
-    \"dealPrice\": 99000,
-    \"originalPrice\": 150000,
-    \"totalStock\": 100,
-    \"maxPerUser\": 1,
-    \"startAt\": \"2024-01-01T00:00:00Z\",
-    \"endAt\": \"2030-12-31T23:59:59Z\"
-  }" | jq -r '.data.id')
-
-echo "TIME_DEAL_ID: $TIME_DEAL_ID"
-```
-
-### 구매 요청
-
-```bash
-curl -s -X POST http://localhost:8080/api/v1/time-deals/${TIME_DEAL_ID}/purchase \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "userId": "00000000-0000-0000-0000-000000000001",
-    "quantity": 1
-  }'
-```
-
-### k6 부하 테스트 (Oversell 검증)
-
-```bash
-k6 run \
-  -e TIME_DEAL_ID="${TIME_DEAL_ID}" \
-  -e BASE_URL="http://localhost:8080" \
-  scripts/time-deal-spike.js
-```
-
-정상 결과 (재고 100, 2,000 동시 요청):
-```
-=== Oversell Detection Report ===
-Purchase Success: 100
-Purchase Failed:  1900
-Oversell:         NO ✅
-=================================
-✓ purchase_duration  p(95)=271ms (<300ms)
-```
+**작은 테이블에서는 쿼리 계획이 프로덕션과 다르다.** `time_deals` 4행 상태라 PostgreSQL 이 인덱스를 무시하고 순차 스캔을 골랐다. 인덱스는 정의돼 있고 `EXPLAIN` 을 따로 돌리면 정상적으로 탄다.
 
 ---
 
-## 주요 설계 결정
+## 아직 못 밝힌 것
 
-### 왜 Lua 스크립트인가?
+- **핵심 주장이 아직 실측으로 뒷받침되지 않는다.** 20:1 · 700 rps 에서는 타임딜이 무관한 요청을 밀어내지 않았다. 세 번 돌려 세 번 다 그랬다. 요청률을 올려 조회 p95 가 꺾이는 지점을 찾아야 하고, 그 지점이 이 설계가 값을 하기 시작하는 경계다.
+- **재시도 3회가 적절한지 모른다.** 정상 구성에서는 이 경로가 0회 밟힌다. 대조군에서만 1,999건 전부가 3회를 소진했다. 3은 측정으로 정한 값이 아니다.
+- **Redis 앞에서 DB 를 두 번 친다.** `findById` 와 `getPurchasedQuantity` 를 걷어내려면 딜 메타데이터를 캐시에 올려야 하는데, 그러면 무효화라는 새 문제가 생긴다. 지금 부하에서 이 둘이 병목이라는 근거가 없어 그대로 뒀다.
+- **상태 라벨이 최대 5초 동안 진실이 아니다.** `SCHEDULED` 인데 이미 팔리는 창이 존재한다. 판매 판단에는 영향이 없지만 운영 화면에서 상태만 보면 안 된다.
+- **Redis 가 죽으면 1차 필터가 사라진다.** 정합성은 2·3차가 지키지만 자원 격리는 통째로 없어진다. 폴백은 없다.
+- **단일 인스턴스 기준이다.** `StockReconciler` 와 `TimeDealStatusScheduler` 둘 다 인스턴스마다 도는 스케줄러라 여러 벌 띄우면 중복 실행된다. 둘 다 멱등이라 파괴적이진 않지만 리더 선출이나 락이 필요하다.
+- **측정 환경이 단일 머신이다.** k6 와 target 이 CPU 를 나눠 쓴다.
 
-`DECRBY` 단독으로는 "확인 후 차감" 을 원자적으로 처리할 수 없습니다. GET → 판단 → DECRBY 사이에 다른 요청이 끼어들면 재고가 음수가 됩니다. Lua 스크립트는 이 세 단계를 Redis 서버 내부에서 단일 명령으로 실행합니다.
+## 구조
 
-### 왜 Optimistic Lock인가?
+```
+core/          도메인 — 모델, 판정 규칙, 포트. Spring·jOOQ·Redis 를 모른다
+application/   유스케이스 — 트랜잭션 경계는 여기서만 연다
+external/      어댑터 — 영속(jOOQ), 캐시(Redis Lua), 스케줄러, 웹
+```
 
-비관적 락(`SELECT FOR UPDATE`)은 동일 row에 대한 모든 요청을 순차 대기시킵니다. 1,000 req/s 스파이크에서는 lock wait 가 DB 커넥션 풀을 고갈시킵니다. Optimistic Lock은 잠금 없이 UPDATE 시점에 version 불일치를 감지합니다. Redis가 이미 약 95% 를 사전 차단하므로 DB 도달 요청 수가 적어 충돌 빈도가 낮습니다.
+의존 방향은 `external → application → core` 단방향이다. `core/` 안에 Spring·jOOQ·Redis import 는 0건이라 `TimeDealValidator` · `StockDecreaser` · `StockRollbackHandler` 는 Spring Context 없이 단위 테스트가 돈다. 대신 `@Component` 를 못 붙여서 빈 등록은 `application/timedeal/config/TimeDealBeanConfig` 가 손으로 한다.
 
-### 왜 재시도(MAX_RETRY_COUNT=3)인가?
+동시성 검증은 `PurchaseTimeDealConcurrencyTest` 가 Testcontainers 로 PostgreSQL·Redis 를 띄워서 돌린다.
 
-Redis를 통과한 소수의 요청이 동시에 동일 version을 읽으면, 1건만 DB OL에 성공하고 나머지는 실패합니다. 이는 Oversell이 아니라 기회 손실입니다. 재시도는 version을 매 시도마다 fresh하게 읽어 정상 요청의 실패를 최소화합니다.
+---
 
-### StockReconciler
+## 측정 재현
 
-프로세스 크래시 또는 rollback 실패로 Redis-DB 재고가 어긋날 수 있습니다. `StockReconciler`가 60초 주기로 ACTIVE 딜 전체를 순회하며 두 방향을 구분해 처리합니다.
+```bash
+docker compose up -d          # PostgreSQL(5437) · Redis(6378)
+./gradlew build -x test
+java -jar build/libs/ecommerce-0.0.1-SNAPSHOT.jar    # 기동 시 Flyway 가 스키마를 만든다
 
-- **`Redis < DB`** (복구 가능): 차이만큼 `INCRBY` 로 Redis 를 교정합니다. `SET` 대신 `INCRBY` 를 쓰는 이유는 복구 시점에 in-flight 요청이 동시에 차감 중일 수 있기 때문입니다.
-- **`Redis > DB`** (비정상): 자동 교정하면 Oversell 위험이 있어 고치지 않고 `log.error` 로 알람만 남겨 운영자 개입을 유도합니다.
+./scripts/run-timedeal-test.sh                       # 기본 구성
+MODE=unfiltered ./scripts/run-timedeal-test.sh       # Redis 1차 필터 무력화 대조군
+```
+
+러너가 딜을 만들고 상태를 `ACTIVE` 로 올린 뒤 Redis·PostgreSQL 통계를 리셋하고 k6 를 돌린다. 상태를 올리는 단계가 필요한 건 `SCHEDULED → ACTIVE` 전이 경로가 없기 때문이다.
+
+스크립트는 응답을 `201 / 409 / 5xx / 기타` 로 나눠 세고, 상품 조회 지연을 스파이크 전·중·후로 나눠 기록한다.
+
+`generateJooq` 는 스키마가 있는 DB 를 향해야 한다. 갓 띄운 빈 DB 에 돌리면 생성 코드가 빈 껍데기로 덮여 컴파일이 깨진다. 생성 결과는 리포지토리에 커밋돼 있으니 스키마를 바꿀 때만 돌리면 된다.
