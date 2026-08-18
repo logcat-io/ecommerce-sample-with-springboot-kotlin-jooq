@@ -65,9 +65,24 @@ class TimeDealValidatorTest {
         assertEquals(TimeDealValidator.Check.ENDED, result)
     }
 
+    // 전이 워커가 아직 안 돈 딜. 판매 구간 안이면 통과시킨다.
     @Test
-    fun `상태가 SCHEDULED → INACTIVE`() {
+    fun `판매 구간 안이면 SCHEDULED 여도 OK`() {
         val deal = activeDeal(status = TimeDealStatus.SCHEDULED)
+        val result = validator.check(deal, quantity = 1, now = now)
+        assertEquals(TimeDealValidator.Check.OK, result)
+    }
+
+    @Test
+    fun `상태가 SOLD_OUT → INACTIVE`() {
+        val deal = activeDeal(status = TimeDealStatus.SOLD_OUT)
+        val result = validator.check(deal, quantity = 1, now = now)
+        assertEquals(TimeDealValidator.Check.INACTIVE, result)
+    }
+
+    @Test
+    fun `상태가 ENDED → INACTIVE`() {
+        val deal = activeDeal(status = TimeDealStatus.ENDED)
         val result = validator.check(deal, quantity = 1, now = now)
         assertEquals(TimeDealValidator.Check.INACTIVE, result)
     }

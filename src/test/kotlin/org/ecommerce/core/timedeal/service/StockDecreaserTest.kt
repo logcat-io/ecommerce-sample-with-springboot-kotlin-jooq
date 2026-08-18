@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.*
 import java.util.*
+import kotlin.test.assertEquals
 import kotlin.test.assertIs
 
 // StockDecreaser 의 핵심 시나리오를 Mock 으로 검증.
@@ -108,7 +109,10 @@ class StockDecreaserTest {
 
             val result = sut.decrease(dealId, 1)
 
-            assertIs<StockDecreaser.Result.VersionConflict>(result)
+            val conflict = assertIs<StockDecreaser.Result.VersionConflict>(result)
+            // 재시도를 전부 소진했으므로 시도 횟수는 MAX_RETRY 와 같아야 한다.
+            // 이 값이 응답의 attempts 로 나가고, 경합 정도를 판단하는 유일한 근거다.
+            assertEquals(3, conflict.attempts)
             verify(stockPort).increase(dealId, 1)
         }
     }

@@ -90,6 +90,52 @@ class PurchaseTimeDealConcurrencyTest {
             .execute()
     }
 
+    // maxPerUser 선검사를 없앤 뒤로, 1인 한도는 savePurchaseRecord 의
+    // UPSERT ... WHERE quantity + ? <= maxPerUser 하나가 보장한다.
+    // 같은 사용자가 동시에 여러 번 시도해도 한도를 넘지 않아야 한다.
+    @Test
+    fun `같은 사용자가 동시에 여러 번 구매해도 maxPerUser 를 넘지 않는다`() {
+        val productId = UUID.randomUUID()
+        insertTestProduct(productId)
+
+        val now = Instant.now()
+        val deal = createUseCase.execute(
+            CreateTimeDealCommand(
+                productId = productId,
+                dealPrice = BigDecimal("5000"),
+                originalPrice = BigDecimal("10000"),
+                totalStock = 50,
+                maxPerUser = 1,
+                startAt = now.minus(1, ChronoUnit.HOURS),
+                endAt = now.plus(1, ChronoUnit.HOURS),
+            )
+        )
+
+        val userId = UUID.randomUUID()
+        val attempts = 20
+        val success = AtomicInteger()
+        val latch = CountDownLatch(1)
+        val pool = Executors.newFixedThreadPool(attempts)
+
+        repeat(attempts) {
+            pool.submit {
+                latch.await()
+                runCatching {
+                    purchaseUseCase.execute(PurchaseTimeDealCommand(deal.id, userId, 1))
+                }.onSuccess { success.incrementAndGet() }
+            }
+        }
+        latch.countDown()
+        pool.shutdown()
+        pool.awaitTermination(30, java.util.concurrent.TimeUnit.SECONDS)
+
+        assertEquals(1, success.get(), "maxPerUser=1 이므로 한 번만 성공해야 한다")
+
+        // 실패한 시도는 Redis 재고를 되돌려야 한다.
+        assertEquals(49, stockPort.getRemaining(deal.id))
+        assertEquals(49, timeDealQueryPort.findById(deal.id)!!.remainingStock)
+    }
+
     @Test
     fun `100개 재고에 200명 동시 구매 시 정확히 100명 성공`() {
         val totalStock = 100

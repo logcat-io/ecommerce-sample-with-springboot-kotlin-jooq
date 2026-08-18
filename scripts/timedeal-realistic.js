@@ -28,7 +28,8 @@ const SPIKE_START = Number(__ENV.SPIKE_START || 10);
 const SPIKE_END   = SPIKE_START + HOLD + 2;      // 램프 업/다운 각 1초 포함
 
 const purchaseSuccess = new Counter('purchase_success');
-const purchase409     = new Counter('purchase_409');
+const purchaseSoldOut = new Counter('purchase_sold_out');
+const purchaseConflict= new Counter('purchase_version_conflict');
 const purchase5xx     = new Counter('purchase_5xx');
 const purchaseOther   = new Counter('purchase_other');
 const purchaseDur     = new Trend('purchase_duration', true);
@@ -123,9 +124,11 @@ export function purchase(data) {
     purchaseDur.add(res.timings.duration);
 
     if (res.status === 201)      purchaseSuccess.add(1);
-    // 409 는 품절과 버전 충돌이 같은 코드로 나가 구분되지 않는다.
-    // 충돌 횟수는 Redis INCRBY 호출 수로 역산해야 한다.
-    else if (res.status === 409) purchase409.add(1);
+    else if (res.status === 409) {
+        const code = res.json('error.code') || '';
+        if (code === 'STOCK_VERSION_CONFLICT') purchaseConflict.add(1);
+        else purchaseSoldOut.add(1);
+    }
     else if (res.status >= 500)  purchase5xx.add(1);
     else                         purchaseOther.add(1);
 
@@ -139,12 +142,13 @@ export function handleSummary(data) {
     const lines = [
         '',
         '=========== 타임딜 오픈 스파이크 측정 ===========',
-        `재고 ${STOCK} / 구매 요청 ${g('purchase_success') + g('purchase_409') + g('purchase_5xx') + g('purchase_other')}`,
+        `재고 ${STOCK} / 구매 요청 ${g('purchase_success') + g('purchase_sold_out') + g('purchase_version_conflict') + g('purchase_5xx') + g('purchase_other')}`,
         '',
         '[정합성]',
         `  구매 성공        ${g('purchase_success')}  (재고와 일치해야 함: ${STOCK})`,
         `  Oversell         ${g('purchase_success') > STOCK ? 'YES' : 'NO'}`,
-        `  409 거부         ${g('purchase_409')}  (품절·버전충돌 구분 불가)`,
+        `  409 품절         ${g('purchase_sold_out')}`,
+        `  409 버전충돌     ${g('purchase_version_conflict')}`,
         `  5xx              ${g('purchase_5xx')}`,
         `  기타 상태        ${g('purchase_other')}`,
         '',

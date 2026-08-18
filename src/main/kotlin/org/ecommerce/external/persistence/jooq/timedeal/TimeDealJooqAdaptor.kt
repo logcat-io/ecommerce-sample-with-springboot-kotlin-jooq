@@ -13,6 +13,7 @@ import org.jooq.DSLContext
 import org.jooq.InsertOnDuplicateSetStep
 import org.jooq.InsertSetStep
 import org.springframework.stereotype.Repository
+import java.time.Instant
 import java.time.ZoneOffset
 import java.util.*
 
@@ -138,6 +139,29 @@ class TimeDealJooqAdaptor(
             .execute()
 
         return affected == 1
+    }
+
+    override fun activateDueDeals(now: Instant): Int {
+        val ts = now.atOffset(ZoneOffset.UTC)
+        val scheduled = TIME_DEALS.STATUS.eq(TimeDealStatus.SCHEDULED.name)
+        val started = TIME_DEALS.START_AT.le(ts)
+        val notEnded = TIME_DEALS.END_AT.gt(ts)
+
+        return dsl.update(TIME_DEALS)
+            .set(TIME_DEALS.STATUS, TimeDealStatus.ACTIVE.name)
+            .where(scheduled.and(started).and(notEnded))
+            .execute()
+    }
+
+    override fun endExpiredDeals(now: Instant): Int {
+        val ts = now.atOffset(ZoneOffset.UTC)
+        val live = TIME_DEALS.STATUS.`in`(TimeDealStatus.SCHEDULED.name, TimeDealStatus.ACTIVE.name)
+        val expired = TIME_DEALS.END_AT.le(ts)
+
+        return dsl.update(TIME_DEALS)
+            .set(TIME_DEALS.STATUS, TimeDealStatus.ENDED.name)
+            .where(live.and(expired))
+            .execute()
     }
 
     override fun findById(timeDealId: UUID): TimeDeal? =

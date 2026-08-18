@@ -1,6 +1,7 @@
 package org.ecommerce.core.timedeal.port
 
 import org.ecommerce.core.timedeal.model.TimeDeal
+import java.time.Instant
 import java.util.UUID
 
 interface TimeDealCommandPort {
@@ -42,4 +43,8 @@ interface TimeDealCommandPort {
     //
     // SELECT 없이 단일 SQL 로 check-and-increment 가 원자적으로 처리된다.
     fun savePurchaseRecord(timeDealId: UUID, userId: UUID, quantity: Int, maxPerUser: Int): Boolean
+
+    fun activateDueDeals(now: Instant): Int
+
+    fun endExpiredDeals(now: Instant): Int
 }

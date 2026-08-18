@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # 타임딜 부하 측정 러너.
 #
-# 딜 생성 후 상태를 ACTIVE 로 올린다. SCHEDULED -> ACTIVE 전이 경로가 없어서
-# 이 단계 없이는 전부 400 TIME_DEAL_NOT_ACTIVE 로 떨어진다.
-# 이 개입이 필요 없어지는 것이 docs/improvement-plan.md 의 목표다.
+# 딜 생성만으로 구매가 열린다. 판매 가능 여부는 TimeDeal.isActiveAt 이 시간으로
+# 판단하므로 상태 라벨 전이 워커를 기다릴 필요가 없다.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -11,6 +10,12 @@ BASE_URL="${BASE_URL:-http://localhost:8080}"
 STOCK="${STOCK:-100}"
 PG=$(docker compose ps -q postgres)
 RD=$(docker compose ps -q redis)
+
+# 런마다 데이터가 쌓이면 findById·getPurchasedQuantity 비용이 조금씩 달라져
+# 런끼리 비교가 안 된다. 매번 같은 조건에서 시작한다.
+docker exec "$PG" psql -U ecommerce -d ecommerce -q -c \
+  "TRUNCATE time_deal_purchases, time_deals, products CASCADE;"
+docker exec "$RD" redis-cli FLUSHDB > /dev/null
 
 PRODUCT_ID=$(curl -s -X POST "$BASE_URL/api/v1/products" -H 'Content-Type: application/json' \
   -d '{"name":"타임딜 부하 측정용","description":null,"price":150000,"category":"loadtest"}' | jq -r '.data.id')
@@ -29,9 +34,6 @@ MODE="${MODE:-filtered}"
 if [ "$MODE" = "unfiltered" ]; then
   docker exec "$RD" redis-cli SET "stock:$TIME_DEAL_ID" 99999999 > /dev/null
 fi
-
-docker exec "$PG" psql -U ecommerce -d ecommerce -q -c \
-  "UPDATE time_deals SET status='ACTIVE' WHERE id='$TIME_DEAL_ID';"
 
 echo "mode=$MODE  deal=$TIME_DEAL_ID  stock=$STOCK  redis=$(docker exec "$RD" redis-cli GET "stock:$TIME_DEAL_ID")"
 

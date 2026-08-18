@@ -45,7 +45,7 @@ class StockDecreaser(
     sealed class Result {
         object Success : Result()
         object StockExhausted : Result()
-        object VersionConflict : Result()
+        data class VersionConflict(val attempts: Int) : Result()
     }
 
     fun decrease(
@@ -66,7 +66,7 @@ class StockDecreaser(
             val currentVersion = timeDealQueryPort.findCurrentVersion(timeDealId)
                 ?: run {
                     rollbackHandler.rollback(timeDealId, quantity)
-                    return Result.VersionConflict
+                    return Result.VersionConflict(attempts = it + 1)
                 }
 
             val dbOk = try {
@@ -83,6 +83,6 @@ class StockDecreaser(
         }
 
         rollbackHandler.rollback(timeDealId, quantity)
-        return Result.VersionConflict
+        return Result.VersionConflict(attempts = MAX_RETRY_COUNT)
     }
 }

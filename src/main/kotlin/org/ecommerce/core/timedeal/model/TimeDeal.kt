@@ -40,7 +40,7 @@ data class TimeDeal(
     }
 
     fun isActiveAt(now: Instant): Boolean =
-        now in startAt..endAt && status == TimeDealStatus.ACTIVE
+        now in startAt..endAt && status != TimeDealStatus.SOLD_OUT && status != TimeDealStatus.ENDED
 
     companion object {
         fun create(

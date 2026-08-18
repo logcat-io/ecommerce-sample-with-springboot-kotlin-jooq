@@ -4,7 +4,9 @@ import org.ecommerce.application.timedeal.dto.PurchaseTimeDealCommand
 import org.ecommerce.application.timedeal.dto.PurchaseTimeDealResult
 import org.ecommerce.core.timedeal.exception.PurchaseLimitExceededException
 import org.ecommerce.core.timedeal.exception.StockExhaustedException
+import org.ecommerce.core.timedeal.exception.StockVersionConflictException
 import org.ecommerce.core.timedeal.exception.TimeDealNotActiveException
+import org.ecommerce.core.timedeal.port.StockPort
 import org.ecommerce.core.timedeal.port.TimeDealCommandPort
 import org.ecommerce.core.timedeal.port.TimeDealQueryPort
 import org.ecommerce.core.timedeal.service.StockDecreaser
@@ -24,10 +26,10 @@ import java.time.Instant
 // 실제 비즈니스 로직은 도메인 서비스에 위임한다.
 //
 // 흐름:
+//   Step 0: Redis 재고 확인 — 확정 실패를 DB 접근 전에 거른다
 //   Step 1: 딜 존재 + 활성 검증
-//   Step 2: maxPerUser 한도 선검사
-//   Step 3: 재고 차감 (Redis → DB)
-//   Step 4: 구매 이력 UPSERT (maxPerUser 원자 최종 방어)
+//   Step 2: 재고 차감 (Redis → DB)
+//   Step 3: 구매 이력 UPSERT (maxPerUser 원자 최종 방어)
 //
 // 모든 실패 경로에서 Redis 재고가 반드시 복구되어야 한다.
 // ═══════════════════════════════════════════════════════════
@@ -35,6 +37,7 @@ import java.time.Instant
 class PurchaseTimeDealUseCase(
     private val timeDealQueryPort: TimeDealQueryPort,
     private val timeDealCommandPort: TimeDealCommandPort,
+    private val stockPort: StockPort,
     private val stockDecreaser: StockDecreaser,
     private val rollbackHandler: StockRollbackHandler,
     private val validator: TimeDealValidator
@@ -50,10 +53,16 @@ class PurchaseTimeDealUseCase(
     ): PurchaseTimeDealResult {
         val now = Instant.now()
 
+        // Step 0: 재고가 이미 소진됐으면 여기서 끝낸다.
+        // 차감이 아니라 확인이라 실패해도 되돌릴 것이 없다.
+        // 정확한 게이트는 Step 2 의 Lua 가 원자적으로 잡는다.
+        if (stockPort.getRemaining(command.timeDealId) < command.quantity) {
+            throw StockExhaustedException()
+        }
+
         // Step 1: 딜 확인 및 활성화 검증
         val deal = timeDealQueryPort.findById(command.timeDealId)
             ?: throw TimeDealNotActiveException("Time Deal not found")
-
 
         // validation
         when(validator.check(deal, command.quantity, now)) {
@@ -64,24 +73,15 @@ class PurchaseTimeDealUseCase(
             TimeDealValidator.Check.QUANTITY_INVALID -> throw TimeDealNotActiveException("Time Deal quantity is invalid")
         }
 
-        // Step 2: maxPerUser 한도 선검사
-        val purchased = timeDealQueryPort.getPurchasedQuantity(deal.id, command.userId)
-        if(purchased + command.quantity > deal.maxPerUser) {
-            throw PurchaseLimitExceededException()
-        }
-
-        // Step 3: 재고 차감 (Redis 원자+ DB Optimistic Lock)
-        when(stockDecreaser.decrease(deal.id, command.quantity)) {
+        // Step 2: 재고 차감 (Redis 원자 + DB Optimistic Lock)
+        when(val result = stockDecreaser.decrease(deal.id, command.quantity)) {
             StockDecreaser.Result.Success -> Unit
             StockDecreaser.Result.StockExhausted -> throw StockExhaustedException()
-            StockDecreaser.Result.VersionConflict -> {
-                // version 경합
-                // 이번 예제에서는 RETRY는 고려하지 않는다.
-                throw StockExhaustedException()
-            }
+            is StockDecreaser.Result.VersionConflict -> throw StockVersionConflictException(result.attempts)
         }
 
-        // Step 4: 구매 이력 UPSERT - maxPerUser 원자 최종 방어선
+        // Step 3: 구매 이력 UPSERT - maxPerUser 원자 최종 방어선
+        // 선검사 없이 이 UPSERT 하나로 한도를 보장한다.
         val recorded = timeDealCommandPort.savePurchaseRecord(
             timeDealId = deal.id,
             userId = command.userId,
