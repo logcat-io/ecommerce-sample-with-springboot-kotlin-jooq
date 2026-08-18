@@ -207,7 +207,19 @@ StockDecreaser.Result.VersionConflict -> throw StockExhaustedException()
 
 재고가 남아 있는데 `409 STOCK_EXHAUSTED` 가 응답됐다. 그 예외의 주석은 "클라이언트는 409 를 보면 재시도해도 의미 없음을 알 수 있다" 인데, 버전 충돌은 재시도하면 성공할 수 있는 실패다.
 
-`StockVersionConflictException`(`STOCK_VERSION_CONFLICT`, 409)으로 분리하고 시도 횟수를 싣게 했다. HTTP 상태는 409 를 유지했다 — 상태 충돌인 건 같고 기존 클라이언트를 깨뜨리지 않는다.
+`StockVersionConflictException`(`STOCK_VERSION_CONFLICT`, 409)으로 분리하고 `Result.VersionConflict(attempts)` 가 시도 횟수를 싣게 했다.
+
+실패를 예외로 던지지 않고 `sealed class Result` 로 돌려주는 이유가 여기 있다. 예외는 호출자가 `catch (e: Exception)` 한 줄로 뭉갤 수 있고, 실패 케이스를 추가해도 컴파일러가 알려주지 않는다. 값으로 돌려주면 `when` 이 분기 누락을 컴파일 타임에 막는다 — Go 에서 `error` 를 반환값으로 다루는 것과 같은 방향이다.
+
+그래서 결과마다 다른 응답을 빠뜨릴 수 없다.
+
+| Result | 응답 | 클라이언트가 할 일 |
+|---|---|---|
+| `Success` | `201` | — |
+| `StockExhausted` | `409 STOCK_EXHAUSTED` | 재시도해도 의미 없음 |
+| `VersionConflict(attempts)` | `409 STOCK_VERSION_CONFLICT` | 재시도하면 성공할 수 있음 |
+
+HTTP 상태를 둘 다 409 로 유지한 건 상태 충돌인 건 같고, 409 를 종료 상태로 취급하는 기존 클라이언트를 깨뜨리지 않기 위해서다.
 
 분리 전에는 §6 의 충돌 열을 만들 수 없었다. 충돌 횟수를 알려면 Redis `INCRBY` 호출 수를 세는 우회로가 필요했고, 지금은 응답으로 집계되며 `INCRBY` 값과 교차 확인된다.
 
