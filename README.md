@@ -60,9 +60,9 @@ Kotlin 2.2 / JDK 21 (Virtual Thread) / Spring Boot 4 / jOOQ 3.19 / PostgreSQL 16
 
 전문은 [`reports/load-test-timedeal-spike.md`](reports/load-test-timedeal-spike.md) · 측정 기록은 [블로그](https://logcat-io.github.io/posts/redis-filter-db-reach-remeasured/).
 
-처음 검증은 "Oversell 이 안 나는가"만 봤다. 재고는 정확히 맞았고 거기서 끝났다고 봤는데, 스레드·커넥션·DB 를 사슬로 놓고 보니 질문이 하나 남았다 — **확정 실패가 커넥션을 붙드는 동안 풀이 마르지 않는가.** Oversell 만 보면 안 보이는 질문이고, 그때 측정에는 밀려나는 쪽이 아예 없었다.
+처음 검증은 Oversell 만 봤다. 재고가 정확히 맞으니 끝났다고 봤는데, **그 측정에는 밀려나는 쪽이 아예 없었다.** 구매 요청만 쐈으니 §1 의 문제를 확인할 대상 자체가 없던 셈이다.
 
-그래서 다시 쟀다. 이번엔 상품 조회를 전 구간 같이 흘리고, **필터만 무력화한 대조군**을 옆에 놓았다.
+그래서 상품 조회를 전 구간 같이 흘리고, **필터만 무력화한 대조군**을 옆에 놓았다.
 
 "Redis 가 자원을 지킨다"는 Redis 를 켜고 재서는 확인되지 않는다. **재고 키를 크게 덮어 1차 필터만 무력화하면 코드 한 줄 안 고치고 대조군이 된다.** DB 가 유일한 거부 주체가 되는 구성이다.
 
