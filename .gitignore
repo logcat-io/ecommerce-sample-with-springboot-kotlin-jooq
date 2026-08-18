@@ -30,7 +30,10 @@ Thumbs.db
 # docs
 
 docs/
-reports/
+reports/*
+# 부하 테스트 리포트는 README 가 링크하는 공개 근거라 추적한다
+!reports/load-test-50k-result.md
+!reports/load-test-timedeal-spike.md
 develop-guide/
 rules/
 
