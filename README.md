@@ -8,6 +8,8 @@ Kotlin 2.2 / JDK 21 (Virtual Thread) / Spring Boot 4 / jOOQ 3.19 / PostgreSQL 16
 
 ## 1. 무엇을 하려고 했나
 
+**동시성 제어가 필요하니 Redis 를 쓰자는 전제 아래 이미 구현되어 있던 서비스에서 일했다.** 그 구조 위에 기능을 얹고 운영하면서 Redis 기반 락이 오히려 문제를 만드는 상황을 몇 번 겪었다. 같은 문제를 다시 만난다면 어떤 가정 위에서 DB 를 보호할까 — 그 질문에 답하려고 만든 코드다.
+
 재고 100에 동시 2,000이 들어오면 1,900건은 확정 실패다. 재고를 열기도 전에 이미 정해져 있는 숫자다.
 
 처음엔 이걸 "Oversell 을 어떻게 막느냐" 문제로 봤다. 그런데 그건 `UPDATE ... WHERE stock > 0` 한 줄로도 막힌다. 재고가 음수가 되는 일은 안 생긴다.
@@ -56,7 +58,11 @@ Kotlin 2.2 / JDK 21 (Virtual Thread) / Spring Boot 4 / jOOQ 3.19 / PostgreSQL 16
 
 ## 3. 결과 — 대조군과 함께 쟀다
 
-전문은 [`reports/load-test-timedeal-spike.md`](reports/load-test-timedeal-spike.md).
+전문은 [`reports/load-test-timedeal-spike.md`](reports/load-test-timedeal-spike.md) · 측정 기록은 [블로그](https://logcat-io.github.io/posts/redis-filter-db-reach-remeasured/).
+
+처음 검증은 "Oversell 이 안 나는가"만 봤다. 재고는 정확히 맞았고 거기서 끝났다고 봤는데, 스레드·커넥션·DB 를 사슬로 놓고 보니 질문이 하나 남았다 — **확정 실패가 커넥션을 붙드는 동안 풀이 마르지 않는가.** Oversell 만 보면 안 보이는 질문이고, 그때 측정에는 밀려나는 쪽이 아예 없었다.
+
+그래서 다시 쟀다. 이번엔 상품 조회를 전 구간 같이 흘리고, **필터만 무력화한 대조군**을 옆에 놓았다.
 
 "Redis 가 자원을 지킨다"는 Redis 를 켜고 재서는 확인되지 않는다. **재고 키를 크게 덮어 1차 필터만 무력화하면 코드 한 줄 안 고치고 대조군이 된다.** DB 가 유일한 거부 주체가 되는 구성이다.
 
@@ -233,6 +239,10 @@ java -jar build/libs/ecommerce-0.0.1-SNAPSHOT.jar
 MODE=unfiltered ./scripts/run-timedeal-test.sh       # Redis 필터 무력화 대조군
 POOL=40 ./scripts/pool-sweep.sh                      # 풀 크기별 스윕
 ```
+
+### 측정 하네스에 대해
+
+시나리오 파라미터(초과청약 배수·도착 형태·경쟁 트래픽)와 결과 해석은 직접 정했고, k6 하네스 작성과 반복 실행·수치 정리는 Claude 에게 맡겼다. "재고 키를 덮어 필터만 무력화한다"는 대조군 구현 방법은 Claude 제안이고, 채택 여부와 어느 구간을 결과에 쓸지는 직접 판단했다. 3,000 rps 구간은 측정기가 먼저 무너져 편차가 20배라 결과에서 뺐다.
 
 러너가 매 실행 전 데이터를 초기화하고(`TRUNCATE` + `FLUSHDB`) 통계를 리셋한다. 런마다 행이 쌓이면 조회 비용이 달라져 런끼리 비교가 안 된다.
 
