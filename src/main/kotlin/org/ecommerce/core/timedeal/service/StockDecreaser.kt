@@ -54,7 +54,7 @@ class StockDecreaser(
     ): Result {
         // 1 단계: Redis 원자 차감
         // Redis Lua 스크립트가 "현재 재고 >= quantity" 를 확인하고 DECRBY 를 원자적으로 수행
-        // 실패 시 DB 에 접근하지 않음 -> DB 부하 차단히 핵심 목적
+        // 실패 시 DB 에 접근하지 않음 -> DB 부하 차단이 핵심 목적
         val redisOk = stockPort.tryDecrease(timeDealId, quantity)
         if(!redisOk) return Result.StockExhausted
 
