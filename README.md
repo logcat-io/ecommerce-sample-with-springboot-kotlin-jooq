@@ -1,6 +1,6 @@
 # ecommerce-server — 타임딜 재고 차감
 
-> 확정 실패할 요청을 DB 도달 전에 버려 커넥션 풀을 지키는 재고 차감 파이프라인.
+> 재고보다 요청이 많으면 그 차이만큼은 어차피 실패한다. 그 요청들이 DB 커넥션을 붙들고 있는 게 아까워서, DB 앞에서 먼저 걷어내 보고 정말 값을 하는지 재봤다.
 
 Kotlin 2.2 / JDK 21 (Virtual Thread) / Spring Boot 4 / jOOQ 3.19 / PostgreSQL 16 / Redis 7 / k6
 
